@@ -79,12 +79,13 @@ jobs:
         run: |
           cd doomgeneric
           SRC=$(ls doomgeneric/*.c | grep -v doomgeneric_xlib.c | grep -v doomgeneric_sdl.c | tr '\n' ' ')
-          gcc -O2 -static -Wall -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DGENERIC -Idoomgeneric \
+          gcc -O2 -static -Wall -Wno-unused-result -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DGENERIC -Idoomgeneric \
               $SRC doomgeneric_headless.c \
               -o doomgeneric_headless -lm -lpng -lz
           file doomgeneric_headless
           ldd doomgeneric_headless 2>&1 || true
           ls -lh doomgeneric_headless
+          sha256sum doomgeneric_headless
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
