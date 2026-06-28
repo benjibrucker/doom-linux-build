@@ -90,7 +90,7 @@ jobs:
           echo "Compiling: $SRC"
           gcc -O2 -static -Wall -Wno-unused-result -Wno-unused-variable -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DGENERIC -Idoomgeneric \
               $SRC doomgeneric_headless.c \
-              -o doomgeneric_headless -lm -lpng -lz
+              -o doomgeneric_headless -lpng -lz -lm
           file doomgeneric_headless
           ldd doomgeneric_headless 2>&1 || true
           ls -lh doomgeneric_headless
