@@ -78,8 +78,17 @@ jobs:
       - name: Build static binary
         run: |
           cd doomgeneric
-          SRC=$(ls doomgeneric/*.c | grep -v doomgeneric_xlib.c | grep -v doomgeneric_sdl.c | tr '\n' ' ')
-          gcc -O2 -static -Wall -Wno-unused-result -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DGENERIC -Idoomgeneric \
+          # Only compile core doom files + our headless platform
+          # Exclude: allegro, emscripten, sdl, win, sosox, linuxvt, djgpp platform files
+          SRC=""
+          for f in doomgeneric/*.c; do
+            case "$f" in
+              *allegro*|*emscripten*|*sdl*|*win.c|*sosox*|*linuxvt*|*djgpp*|*xlib*) ;;
+              *) SRC="$SRC $f" ;;
+            esac
+          done
+          echo "Compiling: $SRC"
+          gcc -O2 -static -Wall -Wno-unused-result -Wno-unused-variable -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DGENERIC -Idoomgeneric \
               $SRC doomgeneric_headless.c \
               -o doomgeneric_headless -lm -lpng -lz
           file doomgeneric_headless
