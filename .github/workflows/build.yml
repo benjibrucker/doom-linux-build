@@ -1,0 +1,93 @@
+name: Build Doom Headless Linux
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc make libpng-dev
+
+      - name: Clone doomgeneric
+        run: git clone --depth 1 https://github.com/ozkl/doomgeneric.git
+
+      - name: Create headless platform
+        run: |
+          cat > doomgeneric/doomgeneric_headless.c << 'EOF'
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <stdint.h>
+          #include <png.h>
+          #include "doomgeneric.h"
+
+          static int frame_count = 0;
+
+          void DG_Init(void) {
+              system("mkdir -p /tmp/doom_frames");
+              printf("[DG] Headless mode. Frames -> /tmp/doom_frames\n");
+          }
+
+          void DG_DrawFrame(void) {
+              char filename[512];
+              snprintf(filename, sizeof(filename), "/tmp/doom_frames/frame_%04d.png", frame_count);
+              FILE *fp = fopen(filename, "wb");
+              if (!fp) return;
+              png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+              png_infop info = png_create_info_struct(png);
+              png_init_io(png, fp);
+              png_set_IHDR(png, info, 320, 200, 8, PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
+                           PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
+              png_write_info(png, info);
+              uint32_t *src = (uint32_t *)DG_ScreenBuffer;
+              for (int y = 0; y < 200; y++) {
+                  png_bytep row = (png_bytep)malloc(320 * 3);
+                  for (int x = 0; x < 320; x++) {
+                      uint32_t px = src[y * 320 + x];
+                      row[x*3+0] = (px >> 16) & 0xFF;
+                      row[x*3+1] = (px >> 8) & 0xFF;
+                      row[x*3+2] = px & 0xFF;
+                  }
+                  png_write_row(png, row);
+                  free(row);
+              }
+              png_write_end(png, NULL);
+              png_destroy_write_struct(&png, &info);
+              fclose(fp);
+              frame_count++;
+          }
+
+          void DG_SleepMs(uint32_t ms) {}
+          uint32_t DG_GetTicksMs(void) { static uint32_t t=0; return t++; }
+          int DG_GetKey(int *pressed, unsigned char *key) { return 0; }
+          void DG_SetWindowTitle(const char *t) {}
+
+          int main(int argc, char **argv) {
+              doomgeneric_Create(argc, argv);
+              while (1) { doomgeneric_Tick(); }
+              return 0;
+          }
+          EOF
+
+      - name: Build static binary
+        run: |
+          cd doomgeneric
+          SRC=$(ls doomgeneric/*.c | grep -v doomgeneric_xlib.c | grep -v doomgeneric_sdl.c | tr '\n' ' ')
+          gcc -O2 -static -Wall -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DGENERIC -Idoomgeneric \
+              $SRC doomgeneric_headless.c \
+              -o doomgeneric_headless -lm -lpng -lz
+          file doomgeneric_headless
+          ldd doomgeneric_headless 2>&1 || true
+          ls -lh doomgeneric_headless
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doomgeneric_headless_linux_x86_64
+          path: doomgeneric/doomgeneric_headless
