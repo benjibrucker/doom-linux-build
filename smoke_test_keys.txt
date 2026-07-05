@@ -1,0 +1,30 @@
+# Smoke test: boot -> title -> menu -> New Game -> E1 -> skill (HMP) -> play
+# ~14.5 s of game time at 35 tics/s
+
+# let the title screen come up
+. x70
+# any key opens the menu
+ENTER x2
+. x12
+# New Game
+ENTER x2
+. x12
+# Episode 1
+ENTER x2
+. x12
+# Skill: Hurt Me Plenty -> game starts (screen melt into E1M1)
+ENTER x2
+. x52
+# walk forward out of the start area
+FWD x105
+# veer right
+FWD+TURNR x25
+FWD x70
+# fire the pistol twice
+FIRE x5
+. x12
+FIRE x5
+. x12
+# try to use (opens a door if one is ahead)
+USE x3
+. x105

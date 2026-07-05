@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-smoke-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,33 +12,82 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc make libpng-dev
+          sudo apt-get install -y -qq gcc make libpng-dev ffmpeg
 
-      - name: Clone doomgeneric
-        run: git clone --depth 1 https://github.com/ozkl/doomgeneric.git
-
-      - name: Use interactive headless platform
+      - name: Clone doomgeneric upstream
         run: |
-          # Copy the interactive version (with key injection) from the repo
-          cp doomgeneric_headless.c doomgeneric/doomgeneric_headless.c
-          echo "Using interactive headless platform with key injection"
+          git clone https://github.com/ozkl/doomgeneric.git
+          cd doomgeneric && git rev-parse HEAD | tee ../upstream_commit.txt
+
+      - name: Insert headless control platform layer (v2)
+        run: cp doomgeneric_headless.c doomgeneric/doomgeneric_headless.c
 
       - name: Build static binary
         run: |
           cd doomgeneric
-          # Use the exact source list from doomgeneric/Makefile (excludes platform files)
           SRC="doomgeneric/dummy.c doomgeneric/am_map.c doomgeneric/doomdef.c doomgeneric/doomstat.c doomgeneric/dstrings.c doomgeneric/d_event.c doomgeneric/d_items.c doomgeneric/d_iwad.c doomgeneric/d_loop.c doomgeneric/d_main.c doomgeneric/d_mode.c doomgeneric/d_net.c doomgeneric/f_finale.c doomgeneric/f_wipe.c doomgeneric/g_game.c doomgeneric/hu_lib.c doomgeneric/hu_stuff.c doomgeneric/info.c doomgeneric/i_cdmus.c doomgeneric/i_endoom.c doomgeneric/i_joystick.c doomgeneric/i_scale.c doomgeneric/i_sound.c doomgeneric/i_system.c doomgeneric/i_timer.c doomgeneric/memio.c doomgeneric/m_argv.c doomgeneric/m_bbox.c doomgeneric/m_cheat.c doomgeneric/m_config.c doomgeneric/m_controls.c doomgeneric/m_fixed.c doomgeneric/m_menu.c doomgeneric/m_misc.c doomgeneric/m_random.c doomgeneric/p_ceilng.c doomgeneric/p_doors.c doomgeneric/p_enemy.c doomgeneric/p_floor.c doomgeneric/p_inter.c doomgeneric/p_lights.c doomgeneric/p_map.c doomgeneric/p_maputl.c doomgeneric/p_mobj.c doomgeneric/p_plats.c doomgeneric/p_pspr.c doomgeneric/p_saveg.c doomgeneric/p_setup.c doomgeneric/p_sight.c doomgeneric/p_spec.c doomgeneric/p_switch.c doomgeneric/p_telept.c doomgeneric/p_tick.c doomgeneric/p_user.c doomgeneric/r_bsp.c doomgeneric/r_data.c doomgeneric/r_draw.c doomgeneric/r_main.c doomgeneric/r_plane.c doomgeneric/r_segs.c doomgeneric/r_sky.c doomgeneric/r_things.c doomgeneric/sha1.c doomgeneric/sounds.c doomgeneric/statdump.c doomgeneric/st_lib.c doomgeneric/st_stuff.c doomgeneric/s_sound.c doomgeneric/tables.c doomgeneric/v_video.c doomgeneric/wi_stuff.c doomgeneric/w_checksum.c doomgeneric/w_file.c doomgeneric/w_main.c doomgeneric/w_wad.c doomgeneric/z_zone.c doomgeneric/w_file_stdc.c doomgeneric/i_input.c doomgeneric/i_video.c doomgeneric/doomgeneric.c"
           gcc -O2 -static -Wall -Wno-unused-result -Wno-unused-variable \
               -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DGENERIC -Idoomgeneric \
               $SRC doomgeneric_headless.c \
               -o doomgeneric_headless -lpng -lz -lm
           file doomgeneric_headless
-          ldd doomgeneric_headless 2>&1 || true
           ls -lh doomgeneric_headless
           sha256sum doomgeneric_headless
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Smoke test — boot, start new game, move and shoot
+        run: |
+          mkdir -p run && cd run
+          ../doomgeneric/doomgeneric_headless -iwad ../freedoom1.wad \
+              --input ../smoke_test_keys.txt --outdir frames
+          N=$(ls frames | wc -l)
+          echo "frames written: $N"
+          test "$N" -ge 400
+          # frames must differ over time (catches menu-stuck / hung event pump)
+          a=$(sha256sum frames/frame_00090.png | cut -d' ' -f1)
+          b=$(sha256sum frames/frame_00250.png | cut -d' ' -f1)
+          c=$(sha256sum frames/frame_00450.png | cut -d' ' -f1)
+          echo "$a"; echo "$b"; echo "$c"
+          test "$a" != "$b" && test "$b" != "$c"
+          echo "SMOKE TEST: PASS"
+
+      - name: Determinism check — second run must be byte-identical
+        run: |
+          mkdir -p run2 && cd run2
+          ../doomgeneric/doomgeneric_headless -iwad ../freedoom1.wad \
+              --input ../smoke_test_keys.txt --outdir frames
+          diff <(cd ../run/frames && sha256sum *) <(cd frames && sha256sum *)
+          echo "DETERMINISM: PASS"
+
+      - name: Chunked-replay check — record-from produces the tail frames
+        run: |
+          mkdir -p run3 && cd run3
+          ../doomgeneric/doomgeneric_headless -iwad ../freedoom1.wad \
+              --input ../smoke_test_keys.txt --outdir frames --record-from 400
+          N=$(ls frames | wc -l)
+          echo "tail frames: $N"
+          test "$N" -ge 100
+          echo "CHUNKED REPLAY: PASS"
+
+      - name: Encode smoke-test MP4
+        run: |
+          ffmpeg -y -framerate 35 -i run/frames/frame_%05d.png \
+              -vf "scale=1280:800:flags=neighbor" \
+              -c:v libx264 -pix_fmt yuv420p -crf 18 smoke_test.mp4
+          ls -lh smoke_test.mp4
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp doomgeneric/doomgeneric_headless out/
+          sha256sum out/doomgeneric_headless | tee out/doomgeneric_headless.sha256
+          cp upstream_commit.txt out/
+          cp smoke_test.mp4 out/
+          for i in 00000 00075 00095 00150 00250 00350 00450; do
+            cp run/frames/frame_$i.png out/ 2>/dev/null || true
+          done
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: doomgeneric_headless_linux_x86_64
-          path: doomgeneric/doomgeneric_headless
+          name: doom_headless_v2
+          path: out/
